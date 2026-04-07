@@ -68,6 +68,8 @@ def build_workflow(
     denoise: float,
     cn_strength: float,
     seed: int,
+    max_size: int = 512,
+    steps: int = 15,
 ) -> dict:
     """Build the ComfyUI workflow dict for img2img + ControlNet."""
     use_lora = flow == "ghibli"
@@ -86,10 +88,20 @@ def build_workflow(
             "class_type": "LoadImage",
             "inputs": {"image": uploaded_filename},
         },
+        "12": {
+            "class_type": "ImageScale",
+            "inputs": {
+                "image": ["2", 0],
+                "width": max_size,
+                "height": max_size,
+                "upscale_method": "lanczos",
+                "crop": "disabled",
+            },
+        },
         "3": {
             "class_type": "VAEEncode",
             "inputs": {
-                "pixels": ["2", 0],
+                "pixels": ["12", 0],
                 "vae": ["1", 2],
             },
         },
@@ -117,7 +129,7 @@ def build_workflow(
                 "positive": ["4", 0],
                 "negative": ["5", 0],
                 "control_net": ["6", 0],
-                "image": ["2", 0],
+                "image": ["12", 0],
                 "strength": cn_strength,
                 "start_percent": 0.0,
                 "end_percent": 1.0,
@@ -131,7 +143,7 @@ def build_workflow(
                 "negative": ["7", 1],
                 "latent_image": ["3", 0],
                 "seed": seed,
-                "steps": 25,
+                "steps": steps,
                 "cfg": 7,
                 "sampler_name": "dpmpp_2m",
                 "scheduler": "karras",
@@ -178,8 +190,13 @@ def queue_prompt(server: str, workflow: dict, client_id: str) -> str:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req) as resp:
-        result = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req) as resp:
+            result = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        print(f"\nComfyUI error ({e.code}): {body}")
+        raise
     return result["prompt_id"]
 
 
@@ -238,6 +255,8 @@ def main():
     parser.add_argument("--controlnet-strength", nargs="+", type=float, default=[0.85], help="ControlNet strengths")
     parser.add_argument("--seeds", nargs="+", type=int, default=[42], help="Seeds for generation")
     parser.add_argument("--output-dir", default="./versions", help="Output directory")
+    parser.add_argument("--steps", type=int, default=15, help="KSampler steps (default: 15)")
+    parser.add_argument("--max-size", type=int, default=512, help="Max image dimension in px (default: 512)")
     parser.add_argument("--server", default=SERVER, help="ComfyUI server address")
     args = parser.parse_args()
 
@@ -247,17 +266,19 @@ def main():
     source_stem = pathlib.Path(args.image).stem
     client_id = str(uuid.uuid4())
 
+    uploaded = upload_image(args.server, args.image)
+    print(f"Uploaded {args.image} as {uploaded}")
+
     combos = list(itertools.product(args.flow, args.denoise, args.controlnet_strength, args.seeds))
     total = len(combos)
-    print(f"Generating {total} variations...")
+    print(f"Generating {total} variations (steps={args.steps}, max_size={args.max_size})...")
 
     for i, (flow, denoise, cn_strength, seed) in enumerate(combos, 1):
         out_name = make_output_name(source_stem, flow, denoise, cn_strength, seed)
         out_path = output_dir / out_name
         print(f"[{i}/{total}] {out_name} ...", end=" ", flush=True)
 
-        uploaded = upload_image(args.server, args.image)
-        workflow = build_workflow(flow, uploaded, denoise, cn_strength, seed)
+        workflow = build_workflow(flow, uploaded, denoise, cn_strength, seed, args.max_size, args.steps)
         prompt_id = queue_prompt(args.server, workflow, client_id)
         wait_for_completion(args.server, client_id, prompt_id)
         fetch_and_save(args.server, prompt_id, str(out_path))
