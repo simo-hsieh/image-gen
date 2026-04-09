@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help env env-comfy env-serve serve serve-ray serve-comfy serve-stop generate generate-comfy generate-ray test test-serve clean
+.PHONY: help env env-comfy env-serve activate-comfy activate-serve serve serve-ray serve-comfy serve-stop generate generate-comfy generate-ray test test-serve clean
 
 help:
 	@echo "Available commands:"
@@ -8,6 +8,8 @@ help:
 	@echo "  Environment:"
 	@echo "    make env-comfy       Create ComfyUI conda environment"
 	@echo "    make env-serve       Create Ray Serve conda environment"
+	@echo "    make activate-comfy  Show command to activate ComfyUI env"
+	@echo "    make activate-serve  Show command to activate Ray Serve env"
 	@echo ""
 	@echo "  Services:"
 	@echo "    make serve-ray       Start Ray Serve on :8000"
@@ -37,6 +39,12 @@ env-comfy:
 
 env-serve:
 	conda env create -f environment-serve.yml --yes
+
+activate-comfy:
+	@echo "Run: conda activate image-gen-comfy"
+
+activate-serve:
+	@echo "Run: conda activate image-gen-serve"
 
 # --- Services ---
 
