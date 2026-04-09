@@ -14,26 +14,29 @@ import websocket  # websocket-client
 
 SERVER = "127.0.0.1:8188"
 
-CHECKPOINT = "toonyou_beta6.safetensors"
+DEFAULT_CHECKPOINT = "toonyou_beta6.safetensors"
 CONTROLNET = "control_v11p_sd15_lineart.pth"
-LORA = "ghibli_style_offset.safetensors"
 
 FLOWS = {
     "cartoon": {
         "positive": "cartoon style, soft colors, gentle cel shading, yellow hair, blonde hair, soft rounded chin",
         "negative": "sharp chin, angular jaw, dark hair, realistic",
+        "checkpoint": DEFAULT_CHECKPOINT,
     },
     "pixar": {
         "positive": "pixar style, 3d render, soft lighting, yellow hair, soft rounded chin",
         "negative": "sharp chin, dark hair, flat",
+        "checkpoint": DEFAULT_CHECKPOINT,
     },
     "anime": {
         "positive": "anime style, pastel colors, studio ghibli, yellow hair, soft rounded chin",
         "negative": "sharp chin, dark hair, western cartoon",
+        "checkpoint": DEFAULT_CHECKPOINT,
     },
     "ghibli": {
-        "positive": "ghibli style, miyazaki, soft watercolor, yellow hair, soft rounded chin",
-        "negative": "sharp chin, dark hair, 3d render",
+        "positive": "ghibli style, studio ghibli anime screenshot, miyazaki, soft watercolor, black hair, glasses, handsome young asian man protagonist, soft facial features, gentle face, clear smooth skin, kind bright eyes, warm gentle smile, anime hero, ikemen, bishounen, black jacket, masterpiece, best quality, detailed face, beautiful warm lighting",
+        "negative": "realistic, 3d render, deformed face, bad anatomy, yellow hair, blonde hair, low quality, blurry, ugly, aged, wrinkles, dark circles, tired looking, harsh features, rough skin, angular face, villain",
+        "checkpoint": "ghibli_diffusion.ckpt",
     },
 }
 
@@ -70,32 +73,39 @@ def build_workflow(
     seed: int,
     max_size: int = 512,
     steps: int = 15,
+    cfg: float = 7,
 ) -> dict:
     """Build the ComfyUI workflow dict for img2img + ControlNet."""
-    use_lora = flow == "ghibli"
-    prompts = FLOWS[flow]
+    flow_config = FLOWS[flow]
+    checkpoint = flow_config["checkpoint"]
 
-    # Where model and clip come from
-    model_source = ["11", 0] if use_lora else ["1", 0]
-    clip_source = ["11", 1] if use_lora else ["1", 1]
+    # Model and clip always come from checkpoint (no LoRA needed with dedicated models)
+    model_source = ["1", 0]
+    clip_source = ["1", 1]
 
     workflow = {
         "1": {
             "class_type": "CheckpointLoaderSimple",
-            "inputs": {"ckpt_name": CHECKPOINT},
+            "inputs": {"ckpt_name": checkpoint},
         },
         "2": {
             "class_type": "LoadImage",
             "inputs": {"image": uploaded_filename},
         },
         "12": {
-            "class_type": "ImageScale",
+            "class_type": "ImageScaleToMaxDimension",
             "inputs": {
                 "image": ["2", 0],
-                "width": max_size,
-                "height": max_size,
+                "largest_size": max_size,
                 "upscale_method": "lanczos",
-                "crop": "disabled",
+            },
+        },
+        "13": {
+            "class_type": "LineArtPreprocessor",
+            "inputs": {
+                "image": ["12", 0],
+                "resolution": max_size,
+                "coarse": "disable",
             },
         },
         "3": {
@@ -108,14 +118,14 @@ def build_workflow(
         "4": {
             "class_type": "CLIPTextEncode",
             "inputs": {
-                "text": prompts["positive"],
+                "text": flow_config["positive"],
                 "clip": clip_source,
             },
         },
         "5": {
             "class_type": "CLIPTextEncode",
             "inputs": {
-                "text": prompts["negative"],
+                "text": flow_config["negative"],
                 "clip": clip_source,
             },
         },
@@ -129,7 +139,7 @@ def build_workflow(
                 "positive": ["4", 0],
                 "negative": ["5", 0],
                 "control_net": ["6", 0],
-                "image": ["12", 0],
+                "image": ["13", 0],
                 "strength": cn_strength,
                 "start_percent": 0.0,
                 "end_percent": 1.0,
@@ -144,8 +154,8 @@ def build_workflow(
                 "latent_image": ["3", 0],
                 "seed": seed,
                 "steps": steps,
-                "cfg": 7,
-                "sampler_name": "dpmpp_2m",
+                "cfg": cfg,
+                "sampler_name": "dpmpp_2m_sde",
                 "scheduler": "karras",
                 "denoise": denoise,
             },
@@ -165,18 +175,6 @@ def build_workflow(
             },
         },
     }
-
-    if use_lora:
-        workflow["11"] = {
-            "class_type": "LoraLoader",
-            "inputs": {
-                "model": ["1", 0],
-                "clip": ["1", 1],
-                "lora_name": LORA,
-                "strength_model": 0.85,
-                "strength_clip": 0.85,
-            },
-        }
 
     return workflow
 
@@ -256,6 +254,7 @@ def main():
     parser.add_argument("--seeds", nargs="+", type=int, default=[42], help="Seeds for generation")
     parser.add_argument("--output-dir", default="./versions", help="Output directory")
     parser.add_argument("--steps", type=int, default=15, help="KSampler steps (default: 15)")
+    parser.add_argument("--cfg", type=float, default=7, help="CFG scale (default: 7)")
     parser.add_argument("--max-size", type=int, default=512, help="Max image dimension in px (default: 512)")
     parser.add_argument("--server", default=SERVER, help="ComfyUI server address")
     args = parser.parse_args()
@@ -278,7 +277,7 @@ def main():
         out_path = output_dir / out_name
         print(f"[{i}/{total}] {out_name} ...", end=" ", flush=True)
 
-        workflow = build_workflow(flow, uploaded, denoise, cn_strength, seed, args.max_size, args.steps)
+        workflow = build_workflow(flow, uploaded, denoise, cn_strength, seed, args.max_size, args.steps, args.cfg)
         prompt_id = queue_prompt(args.server, workflow, client_id)
         wait_for_completion(args.server, client_id, prompt_id)
         fetch_and_save(args.server, prompt_id, str(out_path))

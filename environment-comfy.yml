@@ -1,0 +1,8 @@
+name: image-gen-comfy
+channels:
+  - defaults
+dependencies:
+  - python=3.13
+  - pip
+  - pip:
+    - -e ".[comfy]"
