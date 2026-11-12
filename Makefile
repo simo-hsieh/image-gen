@@ -1,94 +1,75 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help env env-comfy env-serve activate-comfy activate-serve serve serve-ray serve-comfy serve-stop generate generate-comfy generate-ray test test-serve clean
+COMFY_DIR ?= $(shell cd .. && pwd)/ComfyUI
+
+.PHONY: help setup setup-comfy comfy-start generate generate-comfy serve-ray serve-stop test clean
 
 help:
 	@echo "Available commands:"
 	@echo ""
 	@echo "  Environment:"
-	@echo "    make env-comfy       Create ComfyUI conda environment"
-	@echo "    make env-serve       Create Ray Serve conda environment"
-	@echo "    make activate-comfy  Show command to activate ComfyUI env"
-	@echo "    make activate-serve  Show command to activate Ray Serve env"
+	@echo "    make setup           Install Python dependencies with uv"
+	@echo "    make setup-comfy     Clone ComfyUI + download models"
+	@echo ""
+	@echo "  ComfyUI (local dev):"
+	@echo "    make comfy-start     Start ComfyUI server on :8188"
+	@echo "    make generate-comfy  Generate images via ComfyUI API"
+	@echo ""
+	@echo "  Diffusers (standalone/production):"
+	@echo "    make generate        Generate images via Diffusers"
+	@echo "    make generate-ray    Generate via Ray Serve"
 	@echo ""
 	@echo "  Services:"
 	@echo "    make serve-ray       Start Ray Serve on :8000"
-	@echo "    make serve-comfy     Start ComfyUI on :8188"
 	@echo "    make serve-stop      Stop Ray Serve"
 	@echo ""
-	@echo "  Generate:"
-	@echo "    make generate-ray    Generate via Ray Serve"
-	@echo "    make generate-comfy  Generate via ComfyUI"
-	@echo ""
 	@echo "  Testing:"
-	@echo "    make test-serve      Run Ray Serve topology tests"
+	@echo "    make test            Run tests"
 	@echo ""
 	@echo "  Cleanup:"
-	@echo "    make clean           Remove both conda environments"
+	@echo "    make clean           Remove .venv"
 
 # --- Environment setup ---
 
-env:
-	@echo "Usage:"
-	@echo "  make env-comfy   Create ComfyUI conda environment"
-	@echo "  make env-serve   Create Ray Serve conda environment"
-	@echo "  make clean       Remove both environments"
+setup:
+	uv sync
 
-env-comfy:
-	conda env create -f environment-comfy.yml --yes
+setup-comfy:
+	bash scripts/setup-comfy.sh $(COMFY_DIR)
 
-env-serve:
-	conda env create -f environment-serve.yml --yes
+download-models:
+	bash scripts/download-models.sh $(COMFY_DIR)/models
 
-activate-comfy:
-	@echo "Run: conda activate image-gen-comfy"
+# --- ComfyUI (local dev) ---
 
-activate-serve:
-	@echo "Run: conda activate image-gen-serve"
+comfy-start:
+	cd $(COMFY_DIR) && python main.py
+
+generate-comfy:
+	uv run python comfy/generate_versions.py $(ARGS)
+
+# --- Diffusers (standalone/production) ---
+
+generate:
+	MODELS_DIR=$(COMFY_DIR)/models uv run python generate.py $(ARGS)
+
+generate-ray:
+	uv run python serve/generate_versions_ray.py $(ARGS)
 
 # --- Services ---
 
-serve:
-	@echo "Usage:"
-	@echo "  make serve-ray     Start Ray Serve on :8000"
-	@echo "  make serve-comfy   Start ComfyUI on :8188"
-	@echo "  make serve-stop    Stop Ray Serve"
-
 serve-ray:
-	cd serve && conda run -n image-gen-serve serve run serve_diffusion:app
-
-serve-comfy:
-	conda run -n image-gen-comfy python ComfyUI/main.py
+	cd serve && uv run serve run serve_diffusion:app
 
 serve-stop:
-	conda run -n image-gen-serve serve shutdown
-
-# --- Image generation ---
-
-generate:
-	@echo "Usage:"
-	@echo "  make generate-ray    Generate via Ray Serve (requires 'make serve' running)"
-	@echo "  make generate-comfy  Generate via ComfyUI (requires ComfyUI running on :8188)"
-	@echo ""
-	@echo "Pass extra args with ARGS, e.g. make generate-ray ARGS=\"--flow ghibli\""
-
-generate-ray:
-	conda run -n image-gen-serve python serve/generate_versions_ray.py $(ARGS)
-
-generate-comfy:
-	conda run -n image-gen-comfy python comfy/generate_versions.py $(ARGS)
+	uv run serve shutdown
 
 # --- Testing ---
 
 test:
-	@echo "Usage:"
-	@echo "  make test-serve  Run Ray Serve topology tests (no GPU required)"
-
-test-serve:
-	cd serve && conda run -n image-gen-serve python test_serve.py
+	cd serve && uv run python test_serve.py
 
 # --- Cleanup ---
 
 clean:
-	conda env remove -n image-gen-comfy --yes
-	conda env remove -n image-gen-serve --yes
+	rm -rf .venv

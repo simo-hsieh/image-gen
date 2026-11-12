@@ -1,5 +1,6 @@
 generated-images/
 soruce-images/
-ComfyUI/
 *.egg-info/
 __pycache__/
+.venv/
+comfy-outputs/
